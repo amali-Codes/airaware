@@ -1,4 +1,7 @@
+import asyncio
 
+from backend.schemas.recommendations import AIRecommendations
+from backend.services.recommendation_service import RecommendationService
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -81,3 +84,48 @@ async def get_air_quality(
             status_code=502,
             detail=str(exc),
         ) from exc
+@app.get("/api/recommendations", response_model=AIRecommendations)
+async def get_recommendations(
+    city: str = Query(..., min_length=1, max_length=100)
+):
+    try:
+        # Get the latest air quality data
+        air_quality = await OpenMeteoService().get_air_quality_by_city(
+            city.strip()
+        )
+
+        aqi_info = air_quality.current.us_aqi
+
+        if aqi_info.value is None:
+            raise HTTPException(
+                status_code=422,
+                detail="AQI data is unavailable for this city.",
+            )
+
+        # Generate recommendations using Gemini
+        service = RecommendationService()
+
+        recommendations = await asyncio.to_thread(
+            service.generate_recommendations,
+            city=air_quality.location.name,
+            aqi=aqi_info.value,
+            category=aqi_info.category,
+            pollutants=air_quality.current.pollutants.model_dump(),
+        )
+
+        return recommendations
+
+    except CityNotFoundError:
+        raise HTTPException(status_code=404, detail="City not found.")
+
+    except OpenMeteoNetworkError:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to the air quality service.",
+        )
+
+    except OpenMeteoAPIError:
+        raise HTTPException(
+            status_code=502,
+            detail="Air quality service returned an error.",
+        )
