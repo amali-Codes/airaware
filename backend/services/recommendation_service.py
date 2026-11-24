@@ -1,6 +1,7 @@
 import os
 import re
 from typing import Optional
+import logging
 
 from dotenv import load_dotenv
 from google import genai
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from backend.schemas.recommendations import AIRecommendations
 from backend.schemas.user_profile import UserProfile
 
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 
@@ -499,5 +501,12 @@ User Living Profile:
 
             return parsed
 
-        except (APIError, ValidationError, ValueError, TypeError, Exception):
-            return self._fallback_recommendations(aqi, user_profile, pollutants=pollutants)
+        except Exception as exc:
+                    logger.exception(
+                "Gemini recommendation generation failed: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+                    return self._fallback_recommendations(
+                aqi, user_profile, pollutants=pollutants
+            )
