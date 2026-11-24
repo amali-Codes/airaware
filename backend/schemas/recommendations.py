@@ -12,7 +12,7 @@ class AIRecommendations(BaseModel):
 
     sensitive_groups: str = Field(
         ...,
-        description="Precautions for children, older adults, and people with respiratory conditions",
+        description="Precautions tailored strictly to the user's specified sensitivities and selected household members, without mentioning unselected groups or unselected ages",
     )
 
     protection_tips: list[str] = Field(
@@ -29,5 +29,5 @@ class AIRecommendations(BaseModel):
 
     source: str = Field(
         default="gemini",
-        description="Whether recommendations came from Gemini or fallback rules",
+        description="Must be 'gemini'",
     )
