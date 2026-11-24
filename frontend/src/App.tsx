@@ -1,7 +1,45 @@
-
 import { useState } from 'react'
 
 const API_URL = 'http://127.0.0.1:8000'
+
+export type Lifestyle =
+  | 'student'
+  | 'working professional'
+  | 'homemaker'
+  | 'retired'
+  | 'other'
+
+export type HouseholdMember =
+  | 'adults'
+  | 'children'
+  | 'elderly people'
+  | 'infants'
+
+export type Sensitivity =
+  | 'asthma'
+  | 'allergies'
+  | 'respiratory sensitivity'
+  | 'none'
+
+export type ExerciseHabits = 'indoor' | 'outdoor' | 'both'
+
+export interface UserProfile {
+  lifestyle: Lifestyle
+  household_members: HouseholdMember[]
+  sensitivity_considerations: Sensitivity
+  exercise_habits: ExerciseHabits
+  has_air_purifier: boolean
+  uses_mask_outdoors: boolean
+}
+
+const defaultProfile: UserProfile = {
+  lifestyle: 'other',
+  household_members: ['adults'],
+  sensitivity_considerations: 'none',
+  exercise_habits: 'both',
+  has_air_purifier: false,
+  uses_mask_outdoors: false,
+}
 
 interface AirQualityResponse {
   location: {
@@ -32,6 +70,7 @@ interface AirQualityResponse {
   }
   summary: string
 }
+
 interface AIRecommendations {
   outdoor_activity: string
   sensitive_groups: string
@@ -39,6 +78,7 @@ interface AIRecommendations {
   summary: string
   source: 'gemini' | 'fallback'
 }
+
 function App() {
   const [location, setLocation] = useState('Bengaluru')
   const [data, setData] = useState<AirQualityResponse | null>(null)
@@ -47,10 +87,55 @@ function App() {
 
   const [recommendations, setRecommendations] =
     useState<AIRecommendations | null>(null)
-  const [recommendationsLoading, setRecommendationsLoading] =
-    useState(false)
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false)
+  const [recommendationsError, setRecommendationsError] = useState('')
 
+  // Personalization profile state
+  const [userProfile, setUserProfile] = useState<UserProfile>(defaultProfile)
+  const [isProfileExpanded, setIsProfileExpanded] = useState(false)
 
+  // Fetch only recommendations using POST /api/recommendations
+  const fetchRecommendations = async (
+    targetCity: string,
+    profile: UserProfile
+  ) => {
+    setRecommendationsLoading(true)
+    setRecommendationsError('')
+
+    try {
+      const response = await fetch(`${API_URL}/api/recommendations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          city: targetCity,
+          profile: profile,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(
+          errorData.detail || 'Unable to generate recommendations.'
+        )
+      }
+
+      const recResult: AIRecommendations = await response.json()
+      setRecommendations(recResult)
+    } catch (err) {
+      setRecommendations(null)
+      setRecommendationsError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to load recommendations.'
+      )
+    } finally {
+      setRecommendationsLoading(false)
+    }
+  }
+
+  // Search city: fetches live AQI + recommendations
   const searchCity = async () => {
     const city = location.trim()
 
@@ -60,19 +145,19 @@ function App() {
     }
 
     setLoading(true)
-    setRecommendationsLoading(true)
     setError('')
     setData(null)
     setRecommendations(null)
+    setRecommendationsError('')
 
     try {
-      // Fetch air quality data
+      // 1. Fetch air quality data via GET /api/air-quality
       const response = await fetch(
         `${API_URL}/api/air-quality?city=${encodeURIComponent(city)}`
       )
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(
           errorData.detail || 'Unable to retrieve air quality data.'
         )
@@ -81,23 +166,8 @@ function App() {
       const result: AirQualityResponse = await response.json()
       setData(result)
 
-      // Fetch AI recommendations
-      try {
-        const recommendationResponse = await fetch(
-          `${API_URL}/api/recommendations?city=${encodeURIComponent(city)}`
-        )
-
-        if (!recommendationResponse.ok) {
-          throw new Error('Unable to generate recommendations.')
-        }
-
-        const recommendationResult: AIRecommendations =
-          await recommendationResponse.json()
-
-        setRecommendations(recommendationResult)
-      } catch {
-        setRecommendations(null)
-      }
+      // 2. Fetch personalized recommendations via POST /api/recommendations
+      await fetchRecommendations(result.location.name || city, userProfile)
     } catch (err) {
       setError(
         err instanceof Error
@@ -106,10 +176,31 @@ function App() {
       )
     } finally {
       setLoading(false)
-      setRecommendationsLoading(false)
     }
   }
 
+  // Refresh only recommendations without re-fetching AQI
+  const updateRecommendations = async () => {
+    const city = data?.location.name || location.trim()
+    if (!city) {
+      setError('Please search for a city first.')
+      return
+    }
+    await fetchRecommendations(city, userProfile)
+  }
+
+  // Immutable household members toggle
+  const toggleHouseholdMember = (member: HouseholdMember) => {
+    setUserProfile((prev) => {
+      const exists = prev.household_members.includes(member)
+      return {
+        ...prev,
+        household_members: exists
+          ? prev.household_members.filter((m) => m !== member)
+          : [...prev.household_members, member],
+      }
+    })
+  }
 
   const pollutants = [
     {
@@ -322,6 +413,232 @@ function App() {
           </div>
         </section>
 
+        {/* Expandable Personalize Your Guidance Section */}
+        <section className="mt-10 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚙️</span>
+                <h3 className="text-xl font-bold">Personalize Your Guidance</h3>
+              </div>
+              <p className="mt-1 text-sm text-slate-400">
+                Tailor recommendations to your daily routine, household, and sensitivities.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsProfileExpanded(!isProfileExpanded)}
+              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:border-emerald-500/50 hover:bg-slate-800"
+            >
+              <span>{isProfileExpanded ? 'Collapse' : 'Customize profile'}</span>
+              <span className="text-xs text-slate-400">
+                {isProfileExpanded ? '▲' : '▼'}
+              </span>
+            </button>
+          </div>
+
+          {/* Collapsed summary badges */}
+          {!isProfileExpanded && (
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+              <span className="rounded-lg bg-slate-800 px-3 py-1 text-slate-300 capitalize">
+                Lifestyle: {userProfile.lifestyle}
+              </span>
+              <span className="rounded-lg bg-slate-800 px-3 py-1 text-slate-300">
+                Household:{' '}
+                {userProfile.household_members.length > 0
+                  ? userProfile.household_members.join(', ')
+                  : 'None specified'}
+              </span>
+              {userProfile.sensitivity_considerations !== 'none' && (
+                <span className="rounded-lg bg-amber-500/10 px-3 py-1 text-amber-300 capitalize">
+                  Sensitivity: {userProfile.sensitivity_considerations}
+                </span>
+              )}
+              <span className="rounded-lg bg-slate-800 px-3 py-1 text-slate-300 capitalize">
+                Exercise: {userProfile.exercise_habits}
+              </span>
+              {userProfile.has_air_purifier && (
+                <span className="rounded-lg bg-emerald-500/10 px-3 py-1 text-emerald-300">
+                  Air purifier: Yes
+                </span>
+              )}
+              {userProfile.uses_mask_outdoors && (
+                <span className="rounded-lg bg-emerald-500/10 px-3 py-1 text-emerald-300">
+                  Mask outdoors: Yes
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Expanded form controls */}
+          {isProfileExpanded && (
+            <div className="mt-6 border-t border-slate-800 pt-6">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Lifestyle Dropdown */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Lifestyle / Routine
+                  </label>
+                  <select
+                    value={userProfile.lifestyle}
+                    onChange={(e) =>
+                      setUserProfile({
+                        ...userProfile,
+                        lifestyle: e.target.value as Lifestyle,
+                      })
+                    }
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
+                  >
+                    <option value="other">Other / General</option>
+                    <option value="student">Student</option>
+                    <option value="working professional">Working professional</option>
+                    <option value="homemaker">Homemaker</option>
+                    <option value="retired">Retired</option>
+                  </select>
+                </div>
+
+                {/* Health Sensitivities Dropdown */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Health Sensitivities
+                  </label>
+                  <select
+                    value={userProfile.sensitivity_considerations}
+                    onChange={(e) =>
+                      setUserProfile({
+                        ...userProfile,
+                        sensitivity_considerations: e.target.value as Sensitivity,
+                      })
+                    }
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
+                  >
+                    <option value="none">None</option>
+                    <option value="asthma">Asthma</option>
+                    <option value="allergies">Allergies</option>
+                    <option value="respiratory sensitivity">
+                      Respiratory sensitivity
+                    </option>
+                  </select>
+                </div>
+
+                {/* Exercise Habits Dropdown */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Exercise Habits
+                  </label>
+                  <select
+                    value={userProfile.exercise_habits}
+                    onChange={(e) =>
+                      setUserProfile({
+                        ...userProfile,
+                        exercise_habits: e.target.value as ExerciseHabits,
+                      })
+                    }
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-200 outline-none focus:border-emerald-400"
+                  >
+                    <option value="both">Both indoor & outdoor</option>
+                    <option value="outdoor">Outdoor workouts</option>
+                    <option value="indoor">Indoor workouts</option>
+                  </select>
+                </div>
+
+                {/* Household Members Checkboxes */}
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Household Members (select all that apply)
+                  </label>
+                  <div className="mt-2.5 flex flex-wrap gap-2.5">
+                    {(
+                      [
+                        ['adults', 'Adults'],
+                        ['children', 'Children'],
+                        ['elderly people', 'Elderly people'],
+                        ['infants', 'Infants'],
+                      ] as const
+                    ).map(([value, label]) => {
+                      const isSelected =
+                        userProfile.household_members.includes(value)
+                      return (
+                        <button
+                          type="button"
+                          key={value}
+                          onClick={() => toggleHouseholdMember(value)}
+                          className={`rounded-xl border px-4 py-2 text-xs font-medium transition-colors ${isSelected
+                              ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300'
+                              : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                            }`}
+                        >
+                          {isSelected ? '✓ ' : '+ '}
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Air Purifier Toggle */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="purifier-toggle"
+                    checked={userProfile.has_air_purifier}
+                    onChange={(e) =>
+                      setUserProfile({
+                        ...userProfile,
+                        has_air_purifier: e.target.checked,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-400"
+                  />
+                  <label
+                    htmlFor="purifier-toggle"
+                    className="cursor-pointer text-sm text-slate-300"
+                  >
+                    I have an indoor air purifier
+                  </label>
+                </div>
+
+                {/* Mask Usage Toggle */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="mask-toggle"
+                    checked={userProfile.uses_mask_outdoors}
+                    onChange={(e) =>
+                      setUserProfile({
+                        ...userProfile,
+                        uses_mask_outdoors: e.target.checked,
+                      })
+                    }
+                    className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-400"
+                  />
+                  <label
+                    htmlFor="mask-toggle"
+                    className="cursor-pointer text-sm text-slate-300"
+                  >
+                    I wear a mask outdoors
+                  </label>
+                </div>
+              </div>
+
+              {/* Update recommendations button */}
+              <div className="mt-6 flex justify-end border-t border-slate-800/80 pt-4">
+                <button
+                  type="button"
+                  onClick={updateRecommendations}
+                  disabled={recommendationsLoading || !data}
+                  className="rounded-xl bg-emerald-400 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {recommendationsLoading
+                    ? 'Updating recommendations...'
+                    : 'Update recommendations'}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* AI Health Recommendations */}
         <section className="mt-10">
           <div className="mb-5">
@@ -332,13 +649,19 @@ function App() {
               AI Health Recommendations
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              Practical guidance based on your city's air quality.
+              Personalized guidance based on your profile and city's air quality.
             </p>
           </div>
 
           {recommendationsLoading && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-400">
               Generating your health recommendations...
+            </div>
+          )}
+
+          {recommendationsError && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-300">
+              {recommendationsError}
             </div>
           )}
 
@@ -384,13 +707,15 @@ function App() {
                   {recommendations.summary}
                 </p>
                 <p className="mt-5 text-xs text-slate-500">
-                  Generated by: {recommendations.source === 'gemini' ? 'Gemini AI' : 'Rule-based fallback'}
+                  Generated by:{' '}
+                  {recommendations.source === 'gemini'
+                    ? 'Gemini AI'
+                    : 'Rule-based fallback'}
                 </p>
               </div>
             </div>
           )}
         </section>
-
 
         <footer className="mt-16 border-t border-slate-800 py-6 text-center text-sm text-slate-500">
           AirAware · Making every breath count.
